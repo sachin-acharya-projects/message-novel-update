@@ -1,7 +1,11 @@
-import os
-from secret import Configuration
+# from typing import Literal
 from twilio.rest import Client, TwilioException
+from secret import Configuration
 from colorama import Fore, init
+from bs4 import BeautifulSoup
+from lxml import etree
+import requests
+import os
 
 init(autoreset=True)
 
@@ -54,7 +58,50 @@ class CreateConnection:
             print(f"{Fore.LIGHTRED_EX}{str(e)}")
             return 0
 
-if __name__ == "__main__":
-    app = CreateConnection()
-    if app.connect():
-        app.send_message("Hello, There")
+class CONSTANTS:
+    CHAPTER = 3062 - 1
+    URL_PATTERN = "https://boxnovel.com/novel/versatile-mage-boxnovel/chapter-%s/"
+
+class WebScrapeConfig:
+    def setChapter(self, chapter_no: str = CONSTANTS.CHAPTER) -> None:
+        setattr(CONSTANTS, 'CHAPTER', chapter_no)
+    def getUrl(self) -> str:
+        return CONSTANTS.URL_PATTERN % CONSTANTS.CHAPTER
+    @property
+    def updateChapterCounter(self) -> None:
+        self.setChapter(str(int(CONSTANTS.CHAPTER) + 1))
+      
+class Scraper(WebScrapeConfig):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messenger = CreateConnection()
+        self.isConnected = self.messenger.connect()
+    def startScraping(self):
+        response: requests.Response = requests.get(self.getUrl())
+        soup: BeautifulSoup = BeautifulSoup(response.text, features='html.parser')
+        targets: list[etree._Element] = etree.HTML(str(soup)).xpath("/html/body/div[1]/div/div/div/div/div/div/div/div/div[1]/div[2]/div/div/div[1]/div[1]")
+        output = ""
+        for target in targets:
+            p_attributes: list[etree._Element] = target.findall('p')
+            for attribute in p_attributes:
+                output += f"{attribute.text}\n\n"
+        print(output)
+    def isReleased(self, notify: bool = False):
+        response: requests.Response = requests.get(self.getUrl())
+        soup: BeautifulSoup = BeautifulSoup(response.text, features='html.parser')
+        targets: list[etree._Element] = etree.HTML(str(soup)).xpath("/html/body/div[1]/div/div/div/div/div/div/div/div/div[1]/div[1]/div/div[3]/div/div[2]")
+        print(len(targets))
+        if len(targets) > 0:
+            a_tag: str = targets[0].find('a').attrib['title'].replace("Chapter ", "").strip()
+            self.setChapter(a_tag)
+            if self.isConnected and notify:
+                self.messenger.send_message(f"New Chapter {a_tag} has been released.")
+            return True
+        return False
+
+if __name__ == '__main__':
+    import time
+    scraper = Scraper()
+    while True:
+        scraper.isReleased(True)
+        time.sleep(10 * 60)
